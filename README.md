@@ -93,42 +93,65 @@ Digit:
 ## Example Inputs and Outputs
 
 ### Input 1
+```
 x = 001;
+```
 
 ### Output 1
+```
 error
+```
 ___
 
 ### Input 2
+```
 let x_2 = 0;
+```
 
 ### Output 2
+```
 x_2 = 0
+```
 ___
 
 ### Input 3
+```
 let x = 0
 let y = x;
 let z = ---(x+y);
+```
 
 ### Output 3
-0
+```
+x = 0
+y = 0
+z = 0
+```
 ___
 
 ### Input 4
+```
 let x = 1;
 let y = 2;
 let z = ---(x+y)*(x+-y);
+```
 
 ### Output 4
+```
 x = 1
 y = 2
 z = 3
+```
 ___
 
 ### Input 5
+```
 let x = 1;
 let y = 2;
 let z = x+y;
+```
+
 ### Output 4
+```
 3
+```
