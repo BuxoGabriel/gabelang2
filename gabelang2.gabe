@@ -1,0 +1,393 @@
+// Gabelang2 — integer arithmetic REPL
+// let x = exp;   initialize a variable with let
+// x = exp;     reassign a variable
+
+// token types
+let TK_NUM    = "TK_NUM";
+let TK_ID     = "TK_ID";
+let TK_LET    = "TK_LET";
+let TK_PLUS   = "TK_PLUS";
+let TK_MINUS  = "TK_MINUS";
+let TK_STAR   = "TK_STAR";
+let TK_EQ     = "TK_EQ";
+let TK_LPAREN = "TK_LPAREN";
+let TK_RPAREN = "TK_RPAREN";
+let TK_SEMI   = "TK_SEMI";
+let TK_EOF    = "TK_EOF";
+
+// AST node types
+let N_BIN = "N_BIN";
+let N_UN  = "N_UN";
+let N_NUM = "N_NUM";
+let N_ID  = "N_ID";
+
+// operators and variable kinds
+let OP_ADD = "OP_ADD"; let OP_SUB = "OP_SUB"; let OP_MUL = "OP_MUL";
+
+// lexer / parser state
+let SRC = ""; let SRC_LEN = 0; let SRC_POS = 0;
+let TOKENS = []; let TOK_LEN = 0; let TOK_POS = 0;
+let HAD_ERROR = 0;
+
+// environment (parallel arrays, persists across turns)
+let ENV_NAMES = []; let ENV_VALUES = [];
+let ENV_LEN = 0;
+
+
+fn report_error(msg) {
+    HAD_ERROR = 1;
+    print(concat("Error: ", msg));
+    return 0;
+}
+
+fn str_eq(a, b) {
+    let n = len(a);
+    if(n != len(b)) { return 0; }
+    let i = 0;
+    while(i < n) {
+        if(char_code(a, i) != char_code(b, i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn str_to_int(s) {
+    let val = 0;
+    let i = 0;
+    while(i < len(s)) {
+        val = val * 10 + (char_code(s, i) - 48);
+        i = i + 1;
+    }
+    return val;
+}
+
+fn is_digit(c) {
+    if(c < 48) { return 0; }
+    if(c > 57) { return 0; }
+    return 1;
+}
+
+fn is_letter(c) {
+    if(c == 95) { return 1; }
+    if(c < 65)  { return 0; }
+    if(c < 91)  { return 1; }
+    if(c < 97)  { return 0; }
+    if(c < 123) { return 1; }
+    return 0;
+}
+
+fn is_ws(c) {
+    if(c == 32) { return 1; }
+    if(c == 9)  { return 1; }
+    if(c == 10) { return 1; }
+    if(c == 13) { return 1; }
+    return 0;
+}
+
+fn push_tok(t) {
+    TOKENS[TOK_LEN] = t;
+    TOK_LEN = TOK_LEN + 1;
+    return 0;
+}
+
+fn skip_ws() {
+    while(SRC_POS < SRC_LEN) {
+        let c = char_code(SRC, SRC_POS);
+        if(is_ws(c) == 0) { return 0; }
+        SRC_POS = SRC_POS + 1;
+    }
+    return 0;
+}
+
+fn lex_number() {
+    let start = SRC_POS;
+    if(char_code(SRC, SRC_POS) == 48) {
+        SRC_POS = SRC_POS + 1;
+        push_tok({type: TK_NUM, literal: "0"});
+        return 0;
+    }
+    let more = 1;
+    while(more) {
+        if(SRC_POS < SRC_LEN) {
+            let cc = char_code(SRC, SRC_POS);
+            if(is_digit(cc)) { SRC_POS = SRC_POS + 1; }
+            if(is_digit(cc) == 0) { more = 0; }
+        }
+        if(SRC_POS < SRC_LEN == 0) { more = 0; }
+    }
+    let literal = substring(SRC, start, SRC_POS);
+    push_tok({type: TK_NUM, literal: literal });
+    return 0;
+}
+
+fn lex_ident() {
+    let start = SRC_POS;
+    let more = 1;
+    while(more) {
+        if(SRC_POS < SRC_LEN) {
+            let c = char_code(SRC, SRC_POS);
+            let ok = 0;
+            if(is_letter(c)) { ok = 1; }
+            if(is_digit(c))  { ok = 1; }
+            if(ok) { SRC_POS = SRC_POS + 1; }
+            if(ok == 0) { more = 0; }
+        }
+        if(SRC_POS < SRC_LEN == 0) { more = 0; }
+    }
+    let literal = substring(SRC, start, SRC_POS);
+    if(str_eq(literal, "let")) { 
+        push_tok({type: TK_LET, literal: "let"}); 
+        return 0; 
+    }
+    push_tok({ type: TK_ID, literal: literal });
+    return 0;
+}
+
+fn lex_punct(c) {
+    if(c == 43) { push_tok({type: TK_PLUS,   literal: "+"}); SRC_POS = SRC_POS + 1; return 1; }
+    if(c == 45) { push_tok({type: TK_MINUS,  literal: "-"}); SRC_POS = SRC_POS + 1; return 1; }
+    if(c == 42) { push_tok({type: TK_STAR,   literal: "*"}); SRC_POS = SRC_POS + 1; return 1; }
+    if(c == 61) { push_tok({type: TK_EQ,     literal: "="}); SRC_POS = SRC_POS + 1; return 1; }
+    if(c == 40) { push_tok({type: TK_LPAREN, literal: "("}); SRC_POS = SRC_POS + 1; return 1; }
+    if(c == 41) { push_tok({type: TK_RPAREN, literal: ")"}); SRC_POS = SRC_POS + 1; return 1; }
+    if(c == 59) { push_tok({type: TK_SEMI,   literal: ";"}); SRC_POS = SRC_POS + 1; return 1; }
+    return 0;
+}
+
+fn tokenize() {
+    let running = 1;
+    while(running) {
+        skip_ws();
+        if(SRC_POS < SRC_LEN == 0) { running = 0; }
+        if(running) {
+            let c = char_code(SRC, SRC_POS);
+            let handled = 0;
+            if(is_digit(c))  { lex_number(); handled = 1; }
+            if(handled == 0) {
+                if(is_letter(c)) { lex_ident(); handled = 1; }
+            }
+            if(handled == 0) { handled = lex_punct(c); }
+            if(handled == 0) {
+                report_error(concat("unexpected char: ", c));
+                SRC_POS = SRC_POS + 1;
+            }
+        }
+    }
+    push_tok({type: TK_EOF, literal: ""});
+    return 0;
+}
+
+fn peek_type() { return TOKENS[TOK_POS].type; }
+fn peek_tok()  { return TOKENS[TOK_POS]; }
+
+fn parse_assignment() {
+    let is_let = 0;
+    if(peek_type() == TK_LET) { 
+        is_let = 1; 
+        TOK_POS = TOK_POS + 1; 
+    }
+    let id = peek_tok();
+    if(id.type != TK_ID) {
+        report_error("expected identifier");
+        return {is_let: is_let, name: "<err>", val: {type: N_NUM, val: 0}};
+    }
+    TOK_POS = TOK_POS + 1;
+    if(peek_type() != TK_EQ) {
+        report_error("expected '='");
+        return { is_let: is_let, name: id.literal, val: { type: N_NUM, val: 0 } };
+    }
+    TOK_POS = TOK_POS + 1;
+    let val = parse_exp();
+    let saw = 0;
+    if(peek_type() == TK_SEMI) { saw = 1; TOK_POS = TOK_POS + 1; }
+    if(saw == False) { report_error("expected ';'"); }
+    return { is_let: is_let, name: id.literal, val: val };
+}
+
+fn parse_exp() {
+    let left = parse_term();
+    let more = 1;
+    while(more) {
+        let k = peek_type();
+        let matched = 0;
+        if(k == TK_PLUS) {
+            TOK_POS = TOK_POS + 1;
+            left = {type: N_BIN, op: OP_ADD, lhs: left, rhs: parse_term()};
+            matched = 1;
+        }
+        if(matched == 0) {
+            if(k == TK_MINUS) {
+                TOK_POS = TOK_POS + 1;
+                left = {type: N_BIN, op: OP_SUB, lhs: left, rhs: parse_term()};
+                matched = 1;
+            }
+        }
+        if(matched == 0) { more = 0; }
+        if(HAD_ERROR)    { more = 0; }
+    }
+    return left;
+}
+
+fn parse_term() {
+    let left = parse_fact();
+    let more = 1;
+    while(more) {
+        let matched = 0;
+        if(peek_type() == TK_STAR) {
+            TOK_POS = TOK_POS + 1;
+            left = {type: N_BIN, op: OP_MUL, lhs: left, rhs: parse_fact()};
+            matched = 1;
+        }
+        if(matched == 0) { more = 0; }
+        if(HAD_ERROR)    { more = 0; }
+    }
+    return left;
+}
+
+fn parse_fact() {
+    let t = peek_tok();
+    if(t.type == TK_LPAREN) {
+        TOK_POS = TOK_POS + 1;
+        let inner = parse_exp();
+        let saw = 0;
+        if(peek_type() == TK_RPAREN) { 
+            saw = 1;
+            TOK_POS = TOK_POS + 1; 
+        }
+        if(saw == 0) { report_error("expected ')'"); }
+        return inner;
+    }
+    if(t.type == TK_MINUS) {
+        TOK_POS = TOK_POS + 1;
+        return {type: N_UN, op: OP_SUB, arg: parse_fact()};
+    }
+    if(t.type == TK_PLUS) {
+        TOK_POS = TOK_POS + 1;
+        return parse_fact();
+    }
+    if(t.type == TK_NUM) { TOK_POS = TOK_POS + 1; return { type: N_NUM, val: str_to_int(t.literal) }; }
+    if(t.type == TK_ID)  { TOK_POS = TOK_POS + 1; return { type: N_ID,  name: t.literal }; }
+    report_error("expected expression");
+    return {type: N_NUM, val: 0};
+}
+
+fn env_find(name) {
+    let i = 0;
+    while(i < ENV_LEN) {
+        if(str_eq(ENV_NAMES[i], name)) { return i; }
+        i = i + 1;
+    }
+    return ENV_LEN;
+}
+
+fn env_get(name) {
+    let i = env_find(name);
+    if(i < ENV_LEN) { return ENV_VALUES[i]; }
+    report_error(concat("undefined: ", name));
+    return 0;
+}
+
+fn env_set(name, value) {
+    let i = env_find(name);
+    if(i < ENV_LEN) {
+        ENV_VALUES[i] = value;
+        return 0;
+    }
+    ENV_NAMES[ENV_LEN] = name;
+    ENV_VALUES[ENV_LEN] = value;
+    ENV_LEN = ENV_LEN + 1;
+    return 0;
+}
+
+fn evaluate() {
+    let is_assign = 0;
+    if(peek_type() == TK_LET) { is_assign = 1; }
+    if(is_assign == 0) {
+        if(peek_type() == TK_ID) {
+            if(TOKENS[TOK_POS + 1].type == TK_EQ) { is_assign = 1; }
+        }
+    }
+
+    if(is_assign) {
+        let node = parse_assignment();
+        if(HAD_ERROR) { return 0; }
+        eval_assignment(node);
+        if(HAD_ERROR) { return 0; }
+        print(concat(concat(node.name, " = "), env_get(node.name)));
+        return 0;
+    }
+
+    let result = eval_exp(parse_exp());
+    print(result);
+}
+
+fn eval_exp(node) {
+    if(HAD_ERROR) { return 0; }
+    if(node.type == N_NUM) { return node.val; }
+    if(node.type == N_ID)  { return env_get(node.name); }
+    if(node.type == N_UN) {
+        let v = eval_exp(node.arg);
+        if(HAD_ERROR) { return 0; }
+        return 0 - v;
+    }
+    if(node.type == N_BIN) {
+        let l = eval_exp(node.lhs);
+        if(HAD_ERROR) { return 0; }
+        let r = eval_exp(node.rhs);
+        if(HAD_ERROR) { return 0; }
+        if(node.op == OP_ADD) { return l + r; }
+        if(node.op == OP_SUB) { return l - r; }
+        if(node.op == OP_MUL) { return l * r; }
+    }
+    report_error("unknown node");
+    return 0;
+}
+
+fn eval_assignment(node) {
+    if(HAD_ERROR) { return 0; }
+    if(node.is_let == 0) {
+        if(env_find(node.name) == ENV_LEN) {
+            report_error(concat("undefined: ", node.name));
+            return 0;
+        }
+    }
+    if(env_find(node.name) != ENV_LEN) {
+        report_error("can not reassign using 'let'");
+    }
+    let v = eval_exp(node.val);
+    if(HAD_ERROR) { return 0; }
+    env_set(node.name, v);
+    return 0;
+}
+
+fn run_source(src) {
+    SRC = src; SRC_LEN = len(src); SRC_POS = 0;
+    TOKENS = []; TOK_LEN = 0; TOK_POS = 0;
+    HAD_ERROR = 0;
+
+    tokenize();
+    if(HAD_ERROR) { return 0; }
+
+    evaluate();
+    if(HAD_ERROR) { return 0; }
+    return 0;
+}
+
+fn repl() {
+    print("Gabelang2  (press enter on an empty line to quit)");
+    let running = 1;
+    while(running) {
+        let line = prompt("gl2> ");
+        if(len(line) == 0) { running = 0; }
+        if(running) { run_source(line); }
+    }
+    print("goodbye");
+    return 0;
+}
+
+fn main() {
+    repl();
+    return 0;
+}
+
+main();
